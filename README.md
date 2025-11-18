@@ -6,10 +6,20 @@ Projeto acadêmico voltado à implementação e estudo de técnicas de autoajust
 - Victor G. Cavalcante  
 - João Vitor Lopes
 
-## 📌 Objetivos da Atividade Atual
-- [x] Preparar o sistema de auto-tunning para leitura dinâmica de parâmetros  
-- [x] Implementar o algoritmo de busca por padrões (Pattern Search)
+## Objetivo
+Este programa otimiza automaticamente os parâmetros de um modelo `.exe` com 10 parâmetros de entrada (1 textual e 9 numéricos) usando diferentes estratégias de otimização.
 
-## 📚 Próximos Passos (Próxima Aula)
-- [ ] Implementar Algoritmo Genético (GA)
-- [ ] Implementar Otimização por Enxame de Partículas (PSO)
+## Estratégias Implementadas
+- Pattern Search
+- Simplex (Nelder-Mead)
+- Estratégia combinada: Algoritmo Genético + Particle Swarm
+
+## Configuração
+Editar `config.py` para definir:
+- `MODE`: 'max' ou 'min'
+- `EXE_PATH`: caminho para o `.exe`
+- `TIME_LIMIT_SECONDS`: limite de tempo da execução
+
+## Execução
+```bash
+python AutoTunning.py
