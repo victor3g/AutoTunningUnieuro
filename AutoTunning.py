@@ -1,4 +1,4 @@
-# auto_tuning.py
+# auto_tuning_aprimorado.py 
 import argparse
 import math
 import os
@@ -13,9 +13,10 @@ from typing import List, Tuple, Optional, Callable
 # Configurações gerais
 # ----------------------------
 
-BOUNDS = [(1, 100)] * 5  # 5 parâmetros inteiros
+# ALTERAÇÃO AQUI: 10 parâmetros inteiros, intervalo de 1 a 1000
+BOUNDS = [(1, 1000)] * 10 
 DEFAULT_TOTAL_SECONDS = 3600  # 1 hora padrão
-EXECUTABLE_PATH = "simulado.exe"  # altere se necessário
+EXECUTABLE_PATH = "provab2.exe"  # altere se necessário (nome do seu executável)
 SEED = 42  # reprodutibilidade
 
 random.seed(SEED)
@@ -30,11 +31,16 @@ def clamp_int(x: int, low: int, high: int) -> int:
 
 
 def clamp_vec_int(vec: List[int], bounds: List[Tuple[int, int]]) -> List[int]:
+    # Importante: o arredondamento (round) é aplicado antes de converter para int e clamp
     return [clamp_int(int(round(v)), low, high) for v, (low, high) in zip(vec, bounds)]
 
 
 def now_str() -> str:
     return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+
+
+def format_params(params: List[int]) -> str:
+    return "(" + ", ".join(str(p) for p in params) + ")"
 
 
 # ----------------------------
@@ -43,9 +49,9 @@ def now_str() -> str:
 
 class ExecutableEvaluator:
     """
-    Avalia o executável `simulado.exe` com 5 inteiros como parâmetros.
+    Avalia o executável com 10 inteiros como parâmetros.
     Espera que o executável imprima uma única linha com o valor objetivo (float).
-    Exemplo de chamada: simulado.exe 10 20 30 40 50
+    Exemplo de chamada: 10 200 30 40 500 60 70 80 90 1000
     """
 
     def __init__(self, executable_path: str, timeout_sec: int = 30):
@@ -114,9 +120,19 @@ class Strategy:
         self.evaluator = evaluator
         self.bounds = bounds
         self.mode = mode
+        self.start_time = time.time() # Tempo inicial da execução da estratégia
 
     def run(self, seconds_budget: int) -> Result:
         raise NotImplementedError
+
+    def _log_better_result(self, current_time: float, value: float, params: List[int]):
+        """Imprime o melhor resultado encontrado e o tempo."""
+        elapsed_sec = int(current_time - self.start_time)
+        minutes, seconds = divmod(elapsed_sec, 60)
+        time_str = f"{minutes:02d}:{seconds:02d}"
+        
+        # Loga no console
+        print(f"[{self.name}] 🥇 NOVO MELHOR: {value:.6f} | Parâmetros: {format_params(params)} | Tempo: {time_str}")
 
 
 # ----------------------------
@@ -169,13 +185,14 @@ class GeneticAlgorithm(Strategy):
     def _mutate(self, ind: List[int]) -> List[int]:
         for i, (low, high) in enumerate(self.bounds):
             if random.random() < self.mutation_rate:
-                step = random.randint(-5, 5)
+                # Aumentado o range do step de mutação devido ao intervalo maior (1-1000)
+                step = random.randint(-50, 50) 
                 ind[i] = clamp_int(ind[i] + step, low, high)
         return ind
 
     def run(self, seconds_budget: int) -> Result:
-        start = time.time()
-        end_time = start + seconds_budget
+        self.start_time = time.time() # Atualiza o tempo de início para a chamada
+        end_time = self.start_time + seconds_budget
 
         pop = [self._random_individual() for _ in range(self.pop_size)]
         evaluated = self._evaluate_population(pop)
@@ -190,6 +207,7 @@ class GeneticAlgorithm(Strategy):
             if best_value is None or self.mode.better(val, best_value):
                 best_value = val
                 best_params = ind[:]
+                self._log_better_result(time.time(), best_value, best_params) # Log
 
         # Evolução por tempo
         while time.time() < end_time:
@@ -210,14 +228,17 @@ class GeneticAlgorithm(Strategy):
                 if best_value is None or self.mode.better(val, best_value):
                     best_value = val
                     best_params = ind[:]
+                    self._log_better_result(time.time(), best_value, best_params) # Log
+        
+        current_now_str = now_str() 
 
         return Result(
             name=self.name,
             best_params=best_params,
             best_value=best_value,
             evaluations=eval_count,
-            start_time=now_str(),
-            end_time=now_str(),
+            start_time=current_now_str, 
+            end_time=current_now_str,
             notes=f"População {self.pop_size}, crossover {self.crossover_rate}, mutação {self.mutation_rate}"
         )
 
@@ -244,13 +265,14 @@ class ParticleSwarm(Strategy):
         self.c2 = c2
 
     def run(self, seconds_budget: int) -> Result:
-        start = time.time()
-        end_time = start + seconds_budget
+        self.start_time = time.time() # Atualiza o tempo de início para a chamada
+        end_time = self.start_time + seconds_budget
 
         dim = len(self.bounds)
         # Inicialização
         positions = [[random.randint(low, high) for (low, high) in self.bounds] for _ in range(self.swarm_size)]
-        velocities = [[random.uniform(-10, 10) for _ in range(dim)] for _ in range(self.swarm_size)]
+        # Ajuste de velocidade inicial considerando o range maior (1000)
+        velocities = [[random.uniform(-50, 50) for _ in range(dim)] for _ in range(self.swarm_size)]
         pbest_pos = [p[:] for p in positions]
         pbest_val: List[Optional[float]] = [None] * self.swarm_size
 
@@ -266,6 +288,7 @@ class ParticleSwarm(Strategy):
             if val is not None and (gbest_val is None or self.mode.better(val, gbest_val)):
                 gbest_val = val
                 gbest_pos = pos[:]
+                self._log_better_result(time.time(), gbest_val, gbest_pos) # Log
 
         # Iterações por tempo
         while time.time() < end_time:
@@ -292,14 +315,17 @@ class ParticleSwarm(Strategy):
                     if gbest_val is None or self.mode.better(val, gbest_val):
                         gbest_val = val
                         gbest_pos = positions[i][:]
+                        self._log_better_result(time.time(), gbest_val, gbest_pos) # Log
 
+        current_now_str = now_str()
+        
         return Result(
             name=self.name,
             best_params=gbest_pos,
             best_value=gbest_val,
             evaluations=eval_count,
-            start_time=now_str(),
-            end_time=now_str(),
+            start_time=current_now_str,
+            end_time=current_now_str,
             notes=f"Swarm {self.swarm_size}, w={self.w}, c1={self.c1}, c2={self.c2}"
         )
 
@@ -314,20 +340,32 @@ class PatternSearch(Strategy):
         evaluator: ExecutableEvaluator,
         bounds: List[Tuple[int, int]],
         mode: ObjectiveMode,
-        init_step: int = 10,
+        init_step: int = 50, # Aumentado step inicial para o range maior
         min_step: int = 1
     ):
         super().__init__("Pattern Search", evaluator, bounds, mode)
         self.init_step = init_step
         self.min_step = min_step
 
-    def run_local(self, start_params: List[int], seconds_budget: int) -> Tuple[List[int], Optional[float], int]:
+    def run_local(self, start_params: List[int], seconds_budget: int, start_time_run: Optional[float] = None) -> Tuple[List[int], Optional[float], int]:
+        
+        # Se for chamado de fora do run(), start_time_run será None e usará o tempo atual
+        if start_time_run is None:
+            self.start_time = time.time()
+        else:
+            # Se for chamado do Hybrid, usa o tempo de início do Hybrid
+            self.start_time = start_time_run 
+
         start = time.time()
         end_time = start + seconds_budget
         current = start_params[:]
         current_val = self.evaluator.evaluate(current)
         eval_count = 1
         step = self.init_step
+        
+        # Loga o valor inicial se for válido
+        if current_val is not None:
+             self._log_better_result(time.time(), current_val, current) 
 
         dim = len(self.bounds)
 
@@ -350,6 +388,7 @@ class PatternSearch(Strategy):
                     current = cand[:]
                     current_val = val
                     improved = True
+                    self._log_better_result(time.time(), current_val, current) # Log
             # Ajusta passo
             if improved:
                 # mantém passo
@@ -360,16 +399,22 @@ class PatternSearch(Strategy):
         return current, current_val, eval_count
 
     def run(self, seconds_budget: int) -> Result:
+        self.start_time = time.time() # Atualiza o tempo de início para a chamada
+        
         # Inicialização aleatória seguida de busca local
         start_point = [random.randint(low, high) for (low, high) in self.bounds]
-        best_params, best_value, eval_count = self.run_local(start_point, seconds_budget)
+        # Aqui, run_local gerencia seu próprio tempo de início
+        best_params, best_value, eval_count = self.run_local(start_point, seconds_budget, start_time_run=self.start_time)
+        
+        current_now_str = now_str()
+        
         return Result(
             name=self.name,
             best_params=best_params,
             best_value=best_value,
             evaluations=eval_count,
-            start_time=now_str(),
-            end_time=now_str(),
+            start_time=current_now_str,
+            end_time=current_now_str,
             notes=f"Passo inicial {self.init_step}, passo mínimo {self.min_step}"
         )
 
@@ -392,35 +437,44 @@ class HybridGAPlusPattern(Strategy):
         self.ps = PatternSearch(evaluator, bounds, mode)
 
     def run(self, seconds_budget: int) -> Result:
+        self.start_time = time.time() # Tempo inicial da estratégia combinada
         ga_time = int(seconds_budget * self.ga_share)
         ps_time = max(1, seconds_budget - ga_time)
 
-        ga_res = self.ga.run(ga_time)
+        # O GA chama run(), que tem a lógica de log
+        print(f"[{self.name}] Fase GA ({ga_time}s) iniciada.")
+        ga_res = self.ga.run(ga_time) # o GA usa o seu próprio start_time, o que é OK.
+        
+        # Força o start_time do Pattern Search a ser o mesmo do Hybrid para cálculo de tempo corrido
+        self.ps.start_time = self.start_time
+        
+        print(f"[{self.name}] Fase Pattern Search ({ps_time}s) iniciada (Refinamento local com {ga_res.best_value}).")
+        
         # usa o melhor do GA como ponto inicial para refinamento local
-        best_params, best_value, eval_count_ps = self.ps.run_local(ga_res.best_params, ps_time)
+        # Passa o tempo de início do Hybrid para o Pattern Search calcular o tempo de forma contínua
+        best_params, best_value, eval_count_ps = self.ps.run_local(ga_res.best_params, ps_time, start_time_run=self.start_time)
 
         # Escolhe melhor final
         final_params = best_params
         final_value = best_value
         eval_total = ga_res.evaluations + eval_count_ps
+        
+        current_now_str = now_str()
 
         return Result(
             name=self.name,
             best_params=final_params,
             best_value=final_value,
             evaluations=eval_total,
-            start_time=now_str(),
-            end_time=now_str(),
-            notes=f"GA ({ga_time}s) + PS ({ps_time}s). {ga_res.notes}; {self.ps.name}: {self.ps.init_step}->{self.ps.min_step}"
+            start_time=current_now_str,
+            end_time=current_now_str,
+            notes=f"GA ({ga_time}s) + PS ({ps_time}s). {self.ga.name}: Pop {self.ga.pop_size}, c {self.ga.crossover_rate}, m {self.ga.mutation_rate}; {self.ps.name}: {self.ps.init_step}->{self.ps.min_step}"
         )
 
 
 # ----------------------------
 # Orquestração e relatório
 # ----------------------------
-
-def format_params(params: List[int]) -> str:
-    return "(" + ", ".join(str(p) for p in params) + ")"
 
 def generate_report(results: List[Result], mode: ObjectiveMode, total_seconds: int, path: str = "relatorio.md") -> None:
     # Encontra melhor geral
@@ -435,7 +489,7 @@ def generate_report(results: List[Result], mode: ObjectiveMode, total_seconds: i
     lines.append("# Relatório de apresentação — Auto Tuning\n")
     lines.append(f"**Data/hora:** {now_str()}\n")
     lines.append(f"**Executável:** {EXECUTABLE_PATH}\n")
-    lines.append(f"**Parâmetros:** 5 inteiros no intervalo [1, 100]\n")
+    lines.append(f"**Parâmetros:** 10 inteiros no intervalo [1, 1000]\n")
     lines.append(f"**Modo:** {'Maximização' if mode.mode == 'max' else 'Minimização'}\n")
     lines.append(f"**Tempo total:** {total_seconds} segundos (dividido igualmente entre 3 execuções)\n")
     lines.append("\n---\n")
@@ -469,27 +523,27 @@ def generate_report(results: List[Result], mode: ObjectiveMode, total_seconds: i
 def generate_readme(path: str = "README.md") -> None:
     lines = []
     lines.append("# Auto Tuning — Instruções\n")
-    lines.append("Este projeto realiza busca automática de maximização/minimização de `simulado.exe` com 5 parâmetros inteiros em [1, 100].\n")
+    lines.append("Este projeto realiza busca automática de maximização/minimização com 10 parâmetros inteiros em [1, 1000].\n")
     lines.append("## Pré-requisitos\n")
     lines.append("- Python 3.8+\n")
-    lines.append("- `simulado.exe` acessível no diretório atual ou informar o caminho via parâmetro `--exe`.\n")
+    lines.append("- acessível no diretório atual ou informar o caminho via parâmetro --exe.\n")
     lines.append("## Como executar\n")
     lines.append("```bash\n")
-    lines.append("# Maximização, tempo total 1 hora (3600s), executável padrão ./simulado.exe\n")
-    lines.append("python auto_tuning.py --mode max --time 3600\n")
+    lines.append("# Maximização, tempo total 1 hora (3600s), executável padrão\n")
+    lines.append("python auto_tuning_aprimorado.py --mode max --time 3600\n")
     lines.append("\n# Minimização, tempo total 1800s, especificando caminho do executável\n")
-    lines.append("python auto_tuning.py --mode min --time 1800 --exe C:\\\\caminho\\\\simulado.exe\n")
+    lines.append("python auto_tuning_aprimorado.py --mode min --time 1800 --exe C:\\\\caminho\\\\n")
     lines.append("```\n")
     lines.append("## Saídas geradas\n")
-    lines.append("- `relatorio.md`: relatório comparando as 3 execuções e destacando a melhor.\n")
-    lines.append("- logs no console com progresso resumido.\n")
+    lines.append("- relatorio.md: relatório comparando as 3 execuções e destacando a melhor.\n")
+    lines.append("- **Logs em tempo real** no console com progresso e melhor resultado.\n")
     lines.append("## Estratégias implementadas\n")
     lines.append("- Algoritmo Genético (tradicional)\n")
     lines.append("- Particle Swarm (tradicional)\n")
     lines.append("- Combinada: GA + Pattern Search (refinamento local)\n")
     lines.append("## Observações\n")
-    lines.append("- O executável deve imprimir um único valor objetivo em `stdout` (float) para cada chamada.\n")
-    lines.append("- Se o executável usar outro formato de saída, adapte a função `ExecutableEvaluator.evaluate`.\n")
+    lines.append("- O executável deve imprimir um único valor objetivo em stdout (float) para cada chamada.\n")
+    lines.append("- Se o executável usar outro formato de saída, adapte a função ExecutableEvaluator.evaluate.\n")
     lines.append("- O orçamento total de tempo é dividido igualmente entre as três execuções.\n")
     lines.append("- Para ambientes com avaliações lentas, considere reduzir tamanhos de população/enxame.\n")
     with open(path, "w", encoding="utf-8") as f:
@@ -501,10 +555,10 @@ def generate_readme(path: str = "README.md") -> None:
 # ----------------------------
 
 def main():
-    parser = argparse.ArgumentParser(description="Auto Tuning para simulado.exe com 5 parâmetros inteiros.")
+    parser = argparse.ArgumentParser(description="Auto Tuning com 10 parâmetros inteiros [1-1000].")
     parser.add_argument("--mode", type=str, default="max", choices=["max", "min"], help="Maximização (max) ou minimização (min).")
     parser.add_argument("--time", type=int, default=DEFAULT_TOTAL_SECONDS, help="Tempo total (segundos) distribuído entre 3 execuções.")
-    parser.add_argument("--exe", type=str, default=EXECUTABLE_PATH, help="Caminho para o executável simulado.exe.")
+    parser.add_argument("--exe", type=str, default=EXECUTABLE_PATH, help="Caminho para o executável.")
     parser.add_argument("--seed", type=int, default=SEED, help="Semente aleatória.")
     args = parser.parse_args()
 
@@ -519,7 +573,8 @@ def main():
 
     # Divide tempo igualmente: 3 execuções
     per_run = max(3, int(args.time // 3))
-    print(f"[INFO] Modo: {args.mode} | Tempo total: {args.time}s | Tempo por execução: {per_run}s")
+    print(f"[INFO] Modo: {args.mode} | Tempo total: {args.time}s | Tempo por execução: {per_run}s | Seed: {args.seed}")
+    print(f"[INFO] Parâmetros: 10 inteiros no intervalo [1, 1000]")
 
     # Estratégias
     ga = GeneticAlgorithm(evaluator, BOUNDS, mode)
@@ -529,32 +584,21 @@ def main():
     results: List[Result] = []
 
     for strat in [ga, pso, hybrid]:
-        print(f"[EXEC] Rodando: {strat.name} por {per_run}s ...")
+        print(f"\n---")
+        print(f"[EXEC] Rodando: **{strat.name}** por **{per_run}s** ...")
         res = strat.run(per_run)
-        print(f"[RESULT] {strat.name}: params {format_params(res.best_params)} | valor {res.best_value}")
+        print(f"[RESULTADO FINAL] {strat.name}: params {format_params(res.best_params)} | valor {res.best_value:.6f}")
         results.append(res)
+    
+    print("\n---")
 
     # Relatório
     generate_report(results, mode, args.time)
-    generate_readme()
+    generate_readme("README_APRIMORADO.md")
 
     print("[OK] Relatório gerado em relatorio.md")
-    print("[OK] README gerado em README.md")
+    print("[OK] README gerado em README_APRIMORADO.md")
 
 
 if __name__ == "__main__":
     main()
-
-#Auto Tunning
-
-#-2 estratégias tradicionais
-#-1 combinada com pelo menos duas estratégias
-#-configurador (max ou min)
-#-README com instruções
-#-Apresentação/Relatório
-
-#Estratégias
-#-Pattern Searsh
-#-Particle Swarm
-#-Algoritmo  genético
-#-SIMPLEX
