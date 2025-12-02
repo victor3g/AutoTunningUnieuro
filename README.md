@@ -1,4 +1,4 @@
-# 🚀 Auto Tuning de Executáveis
+# 🚀 Auto Tuning de Executáveis (Otimização Black-Box)
 
 Este repositório contém uma ferramenta robusta em Python desenvolvida para realizar a **otimização automática de parâmetros** de softwares externos (executáveis "caixa-preta").
 
